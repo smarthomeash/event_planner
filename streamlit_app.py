@@ -26,6 +26,7 @@ except Exception as e:
 # Helper: Load Data with Error Handling
 def load_data(tab_name, required_columns):
     try:
+        # Use the URL from secrets
         df = conn.read(spreadsheet=st.secrets["gsheet_url"], worksheet=tab_name, ttl=0)
         # If sheet is empty/new, return an empty dataframe with correct columns
         if df.empty:
@@ -89,8 +90,8 @@ elif menu == "Budget":
         st.stop()
 
     # 2. CALCULATE ACTUALS FROM OTHER TABS
-    real_food_cost = df_food['Total'].sum() if not df_food.empty else 0.0
-    real_decor_cost = df_decor['Cost'].sum() if not df_decor.empty else 0.0
+    real_food_cost = pd.to_numeric(df_food['Total'], errors='coerce').sum()
+    real_decor_cost = pd.to_numeric(df_decor['Cost'], errors='coerce').sum()
 
     # 3. BUDGET CONFIGURATION
     col1, col2 = st.columns([1, 2])
@@ -144,9 +145,8 @@ elif menu == "Budget":
         st.divider()
         
         # Total Logic
-        total_limit = edited_budget['Limit'].sum()
+        total_limit = pd.to_numeric(edited_budget['Limit'], errors='coerce').sum()
         # Sum of linked tabs + manual entries for categories NOT linked
-        # (Simplified: We assume Food and Decor are the only linked ones for now)
         total_spent = real_food_cost + real_decor_cost + venue_cost + get_manual("Games") + get_manual("Invitations")
         
         rem = total_limit - total_spent
@@ -208,9 +208,8 @@ elif menu == "Food & Drinks":
         for i, row in edited_food.iterrows():
             q = pd.to_numeric(row.get("Quantity", 0), errors='coerce')
             p = pd.to_numeric(row.get("Price", 0), errors='coerce')
-            t = pd.to_numeric(row.get("Total", 0), errors='coerce')
             
-            # If user entered Qty and Price, but Total is 0/NaN, calculate it
+            # If user entered Qty and Price, auto-calc Total
             if q > 0 and p > 0:
                  edited_food.at[i, "Total"] = q * p
         
