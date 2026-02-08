@@ -1,243 +1,252 @@
 import streamlit as st
 import pandas as pd
-from streamlit_gsheets import GSheetsConnection
 import datetime
-from fpdf import FPDF
+from streamlit_gsheets import GSheetsConnection
 
-# --- 1. GLOBAL CONFIGURATION ---
-# (Generic variables pre-filled for your Balmoral 40th)
-EVENT_NAME = "40th Birthday Bash"
-LOCATION = "Balmoral Beach - Rocky Island"
-BACKUP_LOC = "Balmoral Rotunda"
-COORDS = {"lat": -33.8245, "lon": 151.2505}
-BUDGET_CAP = 2000.0
+# --- 1. APP CONFIGURATION ---
+st.set_page_config(page_title="Event Master (Cloud)", layout="wide", page_icon="☁️")
 
-st.set_page_config(page_title=EVENT_NAME, layout="wide", page_icon="🧘‍♀️")
-
-# --- 2. MOBILE CSS OPTIMIZATION ---
+# Custom CSS
 st.markdown("""
     <style>
-    /* Bigger buttons for touch screens */
-    div.stButton > button:first-child { 
-        height: 3.5em; width: 100%; border-radius: 12px; font-weight: bold; background-color: #007BFF; color: white; 
-    }
-    /* Clean metrics boxes */
-    .stMetric { background-color: #f8f9fa; padding: 15px; border-radius: 10px; border: 1px solid #ddd; }
-    /* Planner Note Styling */
-    .note-box { padding: 10px; border-left: 5px solid #ff9800; background-color: #fff3e0; margin-bottom: 10px; }
+    .stMetric { background-color: #f9f9f9; padding: 15px; border-radius: 10px; border: 1px solid #ddd; }
+    div.stButton > button:first-child { background-color: #007BFF; color: white; font-weight: bold; border-radius: 8px;}
     </style>
     """, unsafe_allow_html=True)
 
-# --- 3. AUTHENTICATION (Admin vs Guest) ---
-if "access" not in st.session_state:
-    st.session_state.access = None
-
-def login():
-    st.title(f"🔐 {EVENT_NAME}")
-    pwd = st.text_input("Enter Access Code", type="password")
-    if st.button("Log In"):
-        if pwd == st.secrets["admin_password"]:
-            st.session_state.access = "admin"
-            st.rerun()
-        elif pwd == st.secrets["guest_password"]:
-            st.session_state.access = "guest"
-            st.rerun()
-        else:
-            st.error("Invalid Password.")
-
-if not st.session_state.access:
-    login()
+# --- 2. CONNECT TO GOOGLE SHEETS ---
+try:
+    conn = st.connection("gsheets", type=GSheetsConnection)
+except:
+    st.error("⚠️ Connection Error: Please ensure your .streamlit/secrets.toml file contains the 'gsheet_url'.")
     st.stop()
 
-# --- 4. DATA CONNECTION ---
-# Connects to your Google Sheet. Requires 'gsheet_url' in st.secrets
-conn = st.connection("gsheets", type=GSheetsConnection)
-SHEET_URL = st.secrets["gsheet_url"]
+# Helper function to load data without caching (so we see updates instantly)
+def load_data(tab_name):
+    return conn.read(spreadsheet=st.secrets["gsheet_url"], worksheet=tab_name, ttl=0)
 
-# --- 5. NAVIGATION MENU ---
-st.sidebar.title(f"🎈 {EVENT_NAME}")
-st.sidebar.caption(f"Role: {st.session_state.access.upper()}")
+# Helper function to save data
+def save_data(tab_name, data):
+    conn.update(spreadsheet=st.secrets["gsheet_url"], worksheet=tab_name, data=data)
+    st.toast(f"Saved to {tab_name}!", icon="✅")
 
-if st.session_state.access == "admin":
-    menu = [
-        "📍 Dashboard & Map",
-        "👥 Guests & Pizza Calc", 
-        "💰 Budget & Tasks", 
-        "🎭 Theme & Props", 
-        "🎲 Games & Activities",
-        "📝 Planner Chat",
-        "📸 Gallery",
-        "📦 Export Archive"
-    ]
-else:
-    menu = [
-         "📍 Dashboard & Map",
-        "👥 Guests & Pizza Calc", 
-        "💰 Budget & Tasks", 
-        "🎭 Theme & Props", 
-        "🎲 Games & Activities",
-        "📝 Planner Chat",
-        "📸 Gallery",
-        "📦 Export Archive"
+# --- 3. SIDEBAR NAVIGATION ---
+st.sidebar.title("📋 Cloud Planner")
+menu = st.sidebar.radio("Go to:", 
+    ["Event", "Budget", "Guests", "Food & Drinks", "Games", "Decoration", "Gallery", "Invitations", "Feedback"]
+)
 
-        # "📍 Event Info", 
-        # "🍕 Menu & Logistics", 
-        # "🎲 Games & Fun", 
-        # "📸 Gallery"
-    ]
+# --- 4. PAGE LOGIC ---
 
-choice = st.sidebar.radio("Navigate", menu)
-
-# --- 6. PAGE LOGIC (VALIDATED) ---
-
-# --- PAGE: DASHBOARD ---
-if choice in ["📍 Dashboard & Map", "📍 Event Info"]:
-    st.header("📍 Live Event Status")
-    c1, c2 = st.columns([1, 1])
+# ==========================
+# 📍 EVENT SECTION (Static Info)
+# ==========================
+if menu == "Event":
+    st.header("📍 Event Details")
+    c1, c2 = st.columns(2)
     with c1:
-        st.metric("Date", "Feb 28, 2026")
-        st.metric("Venue", "Rocky Island")
-        st.info(f"**☔ Rain Plan:** If weather turns, pivot immediately to **{BACKUP_LOC}**.")
-        st.warning("⚠️ **Shark Alert:** Swimming allowed ONLY in the netted area.")
+        st.subheader("Logistics")
+        st.info(f"**Date:** Feb 28, 2026 @ 12:00 PM")
+        st.write("**Primary Location:** Rocky Island, Balmoral Beach")
+        st.write("**Rain Plan:** Balmoral Rotunda")
+        st.write("**Parking:** Bathers Pavilion ($12/hr)")
     with c2:
-        # Balmoral Map
-        st.map(pd.DataFrame([COORDS]))
+        st.subheader("Map")
+        st.map(pd.DataFrame({'lat': [-33.8245], 'lon': [151.2505]}))
 
-# --- PAGE: GUESTS & PIZZA ---
-elif choice in ["👥 Guests & Pizza Calc", "🍕 Menu & Logistics"]:
-    st.header("👥 Guest Management & Menu")
+# ==========================
+# 💰 BUDGET SECTION (The Brain)
+# ==========================
+elif menu == "Budget":
+    st.header("💰 Budget Master Tracker")
     
-    # 1. Load Data
+    # 1. Load Live Data from other tabs
     try:
-        df_guests = conn.read(spreadsheet=SHEET_URL, worksheet="Guests", ttl=0)
+        df_food = load_data("Food")
+        df_decor = load_data("Decor")
+        df_limits = load_data("Budget_Config") # Stores your targets
     except:
-        st.error("Sheet Error: Check that your Google Sheet has a 'Guests' tab.")
+        st.error("Error loading budget data. Check Sheet tabs.")
         st.stop()
-    
-    # 2. Admin Editing vs Guest Viewing
-    if st.session_state.access == "admin":
-        st.subheader("RSVP Control")
-        edited_df = st.data_editor(df_guests, num_rows="dynamic")
-        if st.button("Sync Changes to Google Sheet"):
-            conn.update(spreadsheet=SHEET_URL, data=edited_df)
-            st.success("Synced!")
-    else:
-        st.subheader("Who is coming?")
-        st.dataframe(df_guests[["Name", "Status"]])
 
-    # 3. The Pizza Calculator (3 slices rule)
-    st.divider()
-    st.subheader("🍕 Catering Logic")
-    confirmed_count = len(df_guests[df_guests['Status'].astype(str).str.lower() == 'confirmed'])
-    pizzas_needed = -((confirmed_count * 3) // -8) # Ceiling division logic
+    # Calculate Actuals from tabs
+    real_food_cost = df_food['Total'].sum() if not df_food.empty else 0
+    real_decor_cost = df_decor['Cost'].sum() if not df_decor.empty else 0
     
-    col_a, col_b = st.columns(2)
-    col_a.metric("Confirmed Humans", confirmed_count)
-    col_b.metric("Pizza Boxes (Large)", f"{pizzas_needed} Boxes")
+    # Get Targets/Manual Costs from Budget_Config Tab
+    # Structure: Category | Limit | Actual_Manual
+    col1, col2 = st.columns([1, 2])
     
-    if st.session_state.access == "guest":
-        st.write("**Menu:** Gourmet Woodfired Pizzas, Asian Salad Bowls, Branded Water.")
+    with col1:
+        st.subheader("Set Limits & Manual Costs")
+        edited_limits = st.data_editor(df_limits, num_rows="dynamic", key="budget_editor")
+        if st.button("Save Budget Config"):
+            save_data("Budget_Config", edited_limits)
 
-# --- PAGE: BUDGET & TASKS (Admin Only) ---
-elif choice == "💰 Budget & Tasks":
-    st.header("📊 Planner Control Room")
-    t1, t2 = st.tabs(["Budget Tracker", "2-Person Checklist"])
-    
-    with t1:
-        spent = st.number_input("Total Spent So Far ($)", value=850.0)
-        prog = min(spent / BUDGET_CAP, 1.0)
-        st.progress(prog)
-        st.write(f"**Remaining:** ${BUDGET_CAP - spent}")
-        if spent > BUDGET_CAP:
-            st.error("Over Budget!")
-            
-    with t2:
-        st.write("### Setup Checklist (10:00 AM Start)")
-        st.checkbox("Secure Spot: Rocky Island / Rotunda")
-        st.checkbox("Pickup: '40' Balloons from Born to Party")
-        st.checkbox("Decor: Place Yoga Mats & Swim Rings")
-        st.checkbox("Branding: Apply **icare** & **Suncorp** labels to water")
-        st.checkbox("Safety: Check First Aid & Sunscreen")
-
-# --- PAGE: THEME & PROPS ---
-elif choice == "🎭 Theme & Props":
-    st.header("✨ Theme: 'Naari Shakti' (Women Power)")
-    st.markdown("""
-    **The Vibe:** Empowered, Relaxed, and "Talkative".
-    
-    **Essential Prop Checklist:**
-    - [ ] **The Instapot:** Centerpiece (represents "Talkative Girls")
-    - [ ] **Book 1:** *Naari Shakti*
-    - [ ] **Book 2:** *Multitasking 101*
-    - [ ] **Book 3:** *Scriptures*
-    - [ ] **Knitting Kit:** Pink yarn for the Left Chair
-    """)
-
-# --- PAGE: GAMES ---
-elif choice in ["🎲 Games & Activities", "🎲 Games & Fun"]:
-    st.header("🎮 Beach Games Tracker")
-    
-    st.subheader("1. Decibel Meter Challenge 📢")
-    st.write("Objective: Who can laugh or talk the loudest?")
-    leader = st.text_input("Current Leader Name & Score", "Birthday Girls (105 dB)")
-    
-    st.subheader("2. Yoga Pose-Off 🧘‍♀️")
-    st.write("Objective: Last person standing in Tree Pose on the sand.")
-    
-    st.subheader("3. Shark-Net Volleyball 🏐")
-    st.write("Keep the beach balls inside the swimming enclosure.")
-
-# --- PAGE: CHAT (Admin Only) ---
-elif choice == "📝 Planner Chat":
-    st.header("💬 Internal Thread")
-    st.info("Use this to communicate between the Rotunda and the Car Park.")
-    
-    # Simple session-state chat (resets on reload, use Sheet for permanent)
-    if "chat_log" not in st.session_state:
-        st.session_state.chat_log = []
+    with col2:
+        st.subheader("Financial Overview")
         
-    msg = st.chat_input("Post update...")
-    if msg:
-        ts = datetime.datetime.now().strftime("%H:%M")
-        st.session_state.chat_log.append(f"[{ts}] {msg}")
-        
-    for log in reversed(st.session_state.chat_log):
-        st.markdown(f"<div class='note-box'>{log}</div>", unsafe_allow_html=True)
+        # Extract limits/manuals safely
+        def get_val(cat, col):
+            row = edited_limits[edited_limits['Category'] == cat]
+            return float(row[col].iloc[0]) if not row.empty else 0.0
 
-# --- PAGE: GALLERY ---
-elif choice == "📸 Gallery":
-    st.header("📸 Photo Vault")
-    st.write("Upload Invitations, Menus, or Party Pics.")
-    uploaded = st.file_uploader("Choose files", accept_multiple_files=True)
+        limit_food = get_val("Food", "Limit")
+        limit_decor = get_val("Decor", "Limit")
+        limit_venue = get_val("Venue", "Limit")
+        actual_venue = get_val("Venue", "Actual_Manual") # Manual entry for venue cost
+
+        # Progress Bars
+        def show_bar(label, current, limit):
+            ratio = min(current / limit, 1.0) if limit > 0 else 0
+            st.write(f"**{label}** (${current:.2f} / ${limit:.2f})")
+            st.progress(ratio)
+
+        show_bar("Food & Drinks (Linked)", real_food_cost, limit_food)
+        show_bar("Decoration (Linked)", real_decor_cost, limit_decor)
+        show_bar("Venue (Manual)", actual_venue, limit_venue)
+
+        st.divider()
+        total_spent = real_food_cost + real_decor_cost + actual_venue
+        total_limit = limit_food + limit_decor + limit_venue
+        rem = total_limit - total_spent
+        
+        st.metric("Total Remaining Budget", f"${rem:.2f}", delta=f"{rem:.2f}")
+
+# ==========================
+# 👥 GUESTS SECTION (Persistent)
+# ==========================
+elif menu == "Guests":
+    st.header("👥 Guest Management")
+    
+    # Load from Cloud
+    df_guests = load_data("Guests")
+    
+    # Edit
+    edited_guests = st.data_editor(
+        df_guests,
+        num_rows="dynamic",
+        use_container_width=True
+    )
+    
+    # Save Button
+    if st.button("Sync Guests to Cloud"):
+        save_data("Guests", edited_guests)
+    
+    # Stats
+    try:
+        total = edited_guests["Adults"].sum() + edited_guests["Children"].sum()
+        st.info(f"Total Headcount: {total}")
+    except:
+        st.warning("Enter guest numbers to see totals.")
+
+# ==========================
+# 🍕 FOOD & DRINKS (Persistent)
+# ==========================
+elif menu == "Food & Drinks":
+    st.header("🍕 Food & Drinks Logistics")
+    
+    # Load
+    df_food = load_data("Food")
+    
+    # Edit
+    edited_food = st.data_editor(
+        df_food,
+        num_rows="dynamic",
+        column_config={
+            "Price": st.column_config.NumberColumn(format="$%.2f"),
+            "Total": st.column_config.NumberColumn(format="$%.2f"),
+        },
+        use_container_width=True
+    )
+    
+    # Logic: Auto-calc Total if Qty & Price exist
+    # Note: We do this calc in Python before saving to ensure data integrity
+    if st.button("Calculate Totals & Save"):
+        for index, row in edited_food.iterrows():
+            if row["Quantity"] > 0 and row["Price"] > 0:
+                # Only update if user didn't enter a specific bulk total
+                # Use a small threshold or logic to check if Total is missing
+                 edited_food.at[index, "Total"] = row["Quantity"] * row["Price"]
+        
+        save_data("Food", edited_food)
+        st.success("Calculated and Saved!")
+
+    total_cost = edited_food["Total"].sum()
+    st.metric("Total Food Cost", f"${total_cost:.2f}")
+
+# ==========================
+# 🎨 DECORATION (Persistent)
+# ==========================
+elif menu == "Decoration":
+    st.header("🎨 Decoration & Themes")
+    
+    df_decor = load_data("Decor")
+    
+    edited_decor = st.data_editor(
+        df_decor,
+        num_rows="dynamic",
+        column_config={
+            "Cost": st.column_config.NumberColumn(format="$%.2f"),
+            "Status": st.column_config.SelectboxColumn(options=["To Buy", "Purchased", "Owned"])
+        },
+        use_container_width=True
+    )
+    
+    if st.button("Save Decor Updates"):
+        save_data("Decor", edited_decor)
+
+    st.metric("Total Decor Cost", f"${edited_decor['Cost'].sum():.2f}")
+
+# ==========================
+# 🎲 GAMES (Static for now)
+# ==========================
+elif menu == "Games":
+    st.header("🎲 Party Games")
+    c1, c2 = st.columns(2)
+    with c1:
+        st.subheader("1. Decibel Meter")
+        st.write("Who has the loudest laugh?")
+        st.subheader("2. Yoga Pose-Off")
+        st.write("Last person standing in Tree Pose.")
+    with c2:
+        st.subheader("3. Shark Net Volleyball")
+        st.write("Volleyball inside the swimming enclosure.")
+        st.subheader("4. Pass the Parcel")
+        st.write("Classic beach edition.")
+
+# ==========================
+# 📸 GALLERY & INVITATIONS
+# ==========================
+elif menu in ["Gallery", "Invitations"]:
+    st.header(f"{menu}")
+    st.warning("⚠️ Note: File uploads in this version are temporary (Session only).")
+    st.info("For permanent photo storage, we would need to connect a Google Drive API or AWS S3 bucket, as Google Sheets cannot store images efficiently.")
+    
+    uploaded = st.file_uploader("Upload Files", accept_multiple_files=True)
     if uploaded:
-        cols = st.columns(3)
-        for i, file in enumerate(uploaded):
-            cols[i % 3].image(file, use_container_width=True)
+        cols = st.columns(4)
+        for i, f in enumerate(uploaded):
+            cols[i%4].image(f, use_container_width=True)
 
-# --- PAGE: ARCHIVE (Admin Only) ---
-elif choice == "📦 Export Archive":
-    st.header("📦 Generate Memento")
-    st.write("Click below to download a PDF summary of the event.")
+# ==========================
+# 🗣️ FEEDBACK (Persistent)
+# ==========================
+elif menu == "Feedback":
+    st.header("🗣️ Guest Feedback")
     
-    if st.button("Generate PDF"):
-        pdf = FPDF()
-        pdf.add_page()
-        pdf.set_font("Arial", size=15)
-        pdf.cell(200, 10, txt=f"Archive: {EVENT_NAME}", ln=1, align='C')
-        pdf.set_font("Arial", size=12)
-        pdf.cell(200, 10, txt=f"Date: Feb 28, 2026 | Loc: {LOCATION}", ln=1, align='C')
-        pdf.ln(10)
-        pdf.cell(200, 10, txt="This document certifies the successful completion", ln=1)
-        pdf.cell(200, 10, txt="of the double 40th birthday bash!", ln=1)
-        
-        # Output logic
-        html = pdf.output(dest='S').encode('latin-1')
-        st.download_button("Download PDF", data=html, file_name="Event_Archive.pdf")
-
-# --- SIDEBAR EXTRAS ---
-with st.sidebar:
-    st.divider()
-    if st.button("Log Out"):
-        st.session_state.access = None
-        st.rerun()
-    st.caption("v2.5 | Collaborative Mode Active")
+    with st.form("feedback_form"):
+        name = st.text_input("Name")
+        rating = st.slider("Rating", 1, 5, 5)
+        comments = st.text_area("Comments")
+        if st.form_submit_button("Submit"):
+            # Load current feedback, append new row, save back
+            try:
+                current_feedback = load_data("Feedback")
+                new_entry = pd.DataFrame([{"Name": name, "Rating": rating, "Comments": comments}])
+                updated_feedback = pd.concat([current_feedback, new_entry], ignore_index=True)
+                save_data("Feedback", updated_feedback)
+            except:
+                # If sheet is empty/new
+                new_entry = pd.DataFrame([{"Name": name, "Rating": rating, "Comments": comments}])
+                save_data("Feedback", new_entry)
