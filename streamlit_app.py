@@ -4,7 +4,7 @@ from streamlit_gsheets import GSheetsConnection
 import datetime
 
 # --- 1. GLOBAL CONFIGURATION (GENERIC) ---
-EVENT_NAME = "Double 40th Birthday Bash"
+EVENT_NAME = "40th Birthday Bash"
 LOCATION = "Balmoral Beach - Rocky Island"
 COORDS = {"lat": -33.8245, "lon": 151.2505}
 BUDGET_LIMIT = 2000
@@ -27,7 +27,7 @@ if "access" not in st.session_state:
     st.session_state.access = None
 
 def login():
-    st.title(f"🔐 {EVENT_NAME} Portal")
+    st.title(f"🔐 {EVENT_NAME}")
     pwd = st.text_input("Enter Access Code", type="password")
     if st.button("Log In"):
         if pwd == st.secrets["admin_password"]:
