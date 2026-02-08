@@ -1,157 +1,199 @@
 import streamlit as st
 import pandas as pd
-import datetime
 from streamlit_gsheets import GSheetsConnection
+import datetime
 
 # --- 1. APP CONFIGURATION ---
-st.set_page_config(page_title="Event Master (Cloud)", layout="wide", page_icon="☁️")
+st.set_page_config(page_title="Event Master Planner", layout="wide", page_icon="📅")
 
-# Custom CSS
+# Custom CSS for a professional look
 st.markdown("""
     <style>
     .stMetric { background-color: #f9f9f9; padding: 15px; border-radius: 10px; border: 1px solid #ddd; }
     div.stButton > button:first-child { background-color: #007BFF; color: white; font-weight: bold; border-radius: 8px;}
+    .main-header { font-size: 2.5rem; color: #333; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- 2. CONNECT TO GOOGLE SHEETS ---
+# --- 2. GOOGLE SHEETS CONNECTION ---
+# We wrap this in a try-except to handle the "Sheet Not Found" error gracefully
 try:
     conn = st.connection("gsheets", type=GSheetsConnection)
-except:
-    st.error("⚠️ Connection Error: Please ensure your .streamlit/secrets.toml file contains the 'gsheet_url'.")
+except Exception as e:
+    st.error("⚠️ Secrets Error: Please check your .streamlit/secrets.toml file.")
     st.stop()
 
-# Helper function to load data without caching (so we see updates instantly)
-def load_data(tab_name):
-    return conn.read(spreadsheet=st.secrets["gsheet_url"], worksheet=tab_name, ttl=0)
+# Helper: Load Data with Error Handling
+def load_data(tab_name, required_columns):
+    try:
+        df = conn.read(spreadsheet=st.secrets["gsheet_url"], worksheet=tab_name, ttl=0)
+        # If sheet is empty/new, return an empty dataframe with correct columns
+        if df.empty:
+            return pd.DataFrame(columns=required_columns)
+        # Ensure all required columns exist (fill missing ones)
+        for col in required_columns:
+            if col not in df.columns:
+                df[col] = None
+        return df
+    except Exception as e:
+        # If the tab doesn't exist, we return None to trigger the Setup Guide
+        return None
 
-# Helper function to save data
-def save_data(tab_name, data):
-    conn.update(spreadsheet=st.secrets["gsheet_url"], worksheet=tab_name, data=data)
-    st.toast(f"Saved to {tab_name}!", icon="✅")
+# Helper: Save Data
+def save_data(tab_name, df):
+    try:
+        conn.update(spreadsheet=st.secrets["gsheet_url"], worksheet=tab_name, data=df)
+        st.toast(f"Saved to {tab_name}!", icon="✅")
+    except Exception as e:
+        st.error(f"Save failed: {e}")
 
 # --- 3. SIDEBAR NAVIGATION ---
-st.sidebar.title("📋 Cloud Planner")
+st.sidebar.title("📋 Menu")
 menu = st.sidebar.radio("Go to:", 
     ["Event", "Budget", "Guests", "Food & Drinks", "Games", "Decoration", "Gallery", "Invitations", "Feedback"]
 )
 
-# --- 4. PAGE LOGIC ---
+# --- 4. MAIN LOGIC ---
 
-# ==========================
-# 📍 EVENT SECTION (Static Info)
-# ==========================
+# ---------------------------------------------------------
+# 📍 EVENT
+# ---------------------------------------------------------
 if menu == "Event":
     st.header("📍 Event Details")
     c1, c2 = st.columns(2)
     with c1:
         st.subheader("Logistics")
-        st.info(f"**Date:** Feb 28, 2026 @ 12:00 PM")
-        st.write("**Primary Location:** Rocky Island, Balmoral Beach")
-        st.write("**Rain Plan:** Balmoral Rotunda")
-        st.write("**Parking:** Bathers Pavilion ($12/hr)")
+        st.date_input("Event Date", value=datetime.date(2026, 2, 28))
+        st.time_input("Start Time", value=datetime.time(12, 00))
+        st.text_input("Location", "Rocky Island, Balmoral Beach")
+        st.text_input("Alternative (Rain)", "Balmoral Rotunda")
+        st.text_area("Parking Info", "Paid parking at Bathers Pavilion ($12/hr) or street parking on The Esplanade.")
     with c2:
-        st.subheader("Map")
+        st.subheader("Map & Weather")
         st.map(pd.DataFrame({'lat': [-33.8245], 'lon': [151.2505]}))
+        st.info("☀️ **Forecast:** Check 3 days prior. Avg temp: 26°C.")
 
-# ==========================
-# 💰 BUDGET SECTION (The Brain)
-# ==========================
+# ---------------------------------------------------------
+# 💰 BUDGET
+# ---------------------------------------------------------
 elif menu == "Budget":
     st.header("💰 Budget Master Tracker")
     
-    # 1. Load Live Data from other tabs
-    try:
-        df_food = load_data("Food")
-        df_decor = load_data("Decor")
-        df_limits = load_data("Budget_Config") # Stores your targets
-    except:
-        st.error("Error loading budget data. Check Sheet tabs.")
+    # 1. LOAD DATA
+    df_food = load_data("Food", ["Total"])
+    df_decor = load_data("Decor", ["Cost"])
+    df_budget = load_data("Budget_Config", ["Category", "Limit", "Manual_Cost"])
+    
+    if df_food is None or df_budget is None:
+        st.error("🚨 Critical Error: Tabs missing. Please create 'Food', 'Decor', and 'Budget_Config' tabs in Google Sheets.")
         st.stop()
 
-    # Calculate Actuals from tabs
-    real_food_cost = df_food['Total'].sum() if not df_food.empty else 0
-    real_decor_cost = df_decor['Cost'].sum() if not df_decor.empty else 0
-    
-    # Get Targets/Manual Costs from Budget_Config Tab
-    # Structure: Category | Limit | Actual_Manual
+    # 2. CALCULATE ACTUALS FROM OTHER TABS
+    real_food_cost = df_food['Total'].sum() if not df_food.empty else 0.0
+    real_decor_cost = df_decor['Cost'].sum() if not df_decor.empty else 0.0
+
+    # 3. BUDGET CONFIGURATION
     col1, col2 = st.columns([1, 2])
     
     with col1:
-        st.subheader("Set Limits & Manual Costs")
-        edited_limits = st.data_editor(df_limits, num_rows="dynamic", key="budget_editor")
-        if st.button("Save Budget Config"):
-            save_data("Budget_Config", edited_limits)
+        st.subheader("Set Limits")
+        st.caption("Edit your budget goals here.")
+        
+        # Ensure Budget Config has rows. If empty, seed it.
+        if df_budget.empty:
+            df_budget = pd.DataFrame([
+                {"Category": "Food & Drinks", "Limit": 800.0, "Manual_Cost": 0.0},
+                {"Category": "Venue", "Limit": 500.0, "Manual_Cost": 0.0},
+                {"Category": "Decoration", "Limit": 300.0, "Manual_Cost": 0.0},
+                {"Category": "Games", "Limit": 100.0, "Manual_Cost": 0.0},
+                {"Category": "Invitations", "Limit": 50.0, "Manual_Cost": 0.0}
+            ])
+            
+        edited_budget = st.data_editor(df_budget, num_rows="dynamic", key="budget_edit")
+        if st.button("Save Limits"):
+            save_data("Budget_Config", edited_budget)
 
     with col2:
         st.subheader("Financial Overview")
         
-        # Extract limits/manuals safely
-        def get_val(cat, col):
-            row = edited_limits[edited_limits['Category'] == cat]
-            return float(row[col].iloc[0]) if not row.empty else 0.0
-
-        limit_food = get_val("Food", "Limit")
-        limit_decor = get_val("Decor", "Limit")
-        limit_venue = get_val("Venue", "Limit")
-        actual_venue = get_val("Venue", "Actual_Manual") # Manual entry for venue cost
+        # Helper to extract limits safely
+        def get_limit(cat):
+            row = edited_budget[edited_budget['Category'] == cat]
+            return float(row['Limit'].iloc[0]) if not row.empty else 0.0
+        
+        def get_manual(cat):
+            row = edited_budget[edited_budget['Category'] == cat]
+            return float(row['Manual_Cost'].iloc[0]) if not row.empty else 0.0
 
         # Progress Bars
         def show_bar(label, current, limit):
             ratio = min(current / limit, 1.0) if limit > 0 else 0
             st.write(f"**{label}** (${current:.2f} / ${limit:.2f})")
             st.progress(ratio)
+            if current > limit:
+                st.warning(f"Over budget by ${current - limit:.2f}")
 
-        show_bar("Food & Drinks (Linked)", real_food_cost, limit_food)
-        show_bar("Decoration (Linked)", real_decor_cost, limit_decor)
-        show_bar("Venue (Manual)", actual_venue, limit_venue)
+        # Display
+        show_bar("Food & Drinks (Linked to Tab)", real_food_cost, get_limit("Food & Drinks"))
+        show_bar("Decoration (Linked to Tab)", real_decor_cost, get_limit("Decoration"))
+        
+        # Venue (Manual entry via Budget Config tab)
+        venue_cost = get_manual("Venue")
+        show_bar("Venue/Parking (Manual Entry)", venue_cost, get_limit("Venue"))
 
         st.divider()
-        total_spent = real_food_cost + real_decor_cost + actual_venue
-        total_limit = limit_food + limit_decor + limit_venue
-        rem = total_limit - total_spent
         
+        # Total Logic
+        total_limit = edited_budget['Limit'].sum()
+        # Sum of linked tabs + manual entries for categories NOT linked
+        # (Simplified: We assume Food and Decor are the only linked ones for now)
+        total_spent = real_food_cost + real_decor_cost + venue_cost + get_manual("Games") + get_manual("Invitations")
+        
+        rem = total_limit - total_spent
         st.metric("Total Remaining Budget", f"${rem:.2f}", delta=f"{rem:.2f}")
 
-# ==========================
-# 👥 GUESTS SECTION (Persistent)
-# ==========================
+# ---------------------------------------------------------
+# 👥 GUESTS
+# ---------------------------------------------------------
 elif menu == "Guests":
-    st.header("👥 Guest Management")
+    st.header("👥 Guest List")
     
-    # Load from Cloud
-    df_guests = load_data("Guests")
+    required_cols = ["Family Name", "Adults", "Children", "Ages", "Dietary", "RSVP"]
+    df = load_data("Guests", required_cols)
     
-    # Edit
-    edited_guests = st.data_editor(
-        df_guests,
-        num_rows="dynamic",
-        use_container_width=True
-    )
+    if df is None:
+        st.error("Missing 'Guests' tab in Google Sheets.")
+        st.stop()
+
+    edited_guests = st.data_editor(df, num_rows="dynamic", use_container_width=True)
     
-    # Save Button
-    if st.button("Sync Guests to Cloud"):
+    if st.button("Sync Guests"):
         save_data("Guests", edited_guests)
-    
+        
     # Stats
     try:
-        total = edited_guests["Adults"].sum() + edited_guests["Children"].sum()
-        st.info(f"Total Headcount: {total}")
+        adults = pd.to_numeric(edited_guests['Adults'], errors='coerce').fillna(0).sum()
+        kids = pd.to_numeric(edited_guests['Children'], errors='coerce').fillna(0).sum()
+        st.info(f"**Headcount:** {int(adults)} Adults + {int(kids)} Kids = {int(adults+kids)} Total")
     except:
-        st.warning("Enter guest numbers to see totals.")
+        pass
 
-# ==========================
-# 🍕 FOOD & DRINKS (Persistent)
-# ==========================
+# ---------------------------------------------------------
+# 🍕 FOOD & DRINKS
+# ---------------------------------------------------------
 elif menu == "Food & Drinks":
-    st.header("🍕 Food & Drinks Logistics")
+    st.header("🍕 Food & Drinks Tracker")
+    st.caption("Total Cost flows automatically to the Budget tab.")
     
-    # Load
-    df_food = load_data("Food")
+    cols = ["Item", "Owner", "Sourcing", "Price", "Quantity", "Total"]
+    df = load_data("Food", cols)
     
-    # Edit
+    if df is None: 
+        st.error("Missing 'Food' tab.") 
+        st.stop()
+
     edited_food = st.data_editor(
-        df_food,
+        df, 
         num_rows="dynamic",
         column_config={
             "Price": st.column_config.NumberColumn(format="$%.2f"),
@@ -160,31 +202,53 @@ elif menu == "Food & Drinks":
         use_container_width=True
     )
     
-    # Logic: Auto-calc Total if Qty & Price exist
-    # Note: We do this calc in Python before saving to ensure data integrity
+    # Calculation Logic
     if st.button("Calculate Totals & Save"):
-        for index, row in edited_food.iterrows():
-            if row["Quantity"] > 0 and row["Price"] > 0:
-                # Only update if user didn't enter a specific bulk total
-                # Use a small threshold or logic to check if Total is missing
-                 edited_food.at[index, "Total"] = row["Quantity"] * row["Price"]
+        # Iterate and calculate if Quantity/Price exist
+        for i, row in edited_food.iterrows():
+            q = pd.to_numeric(row.get("Quantity", 0), errors='coerce')
+            p = pd.to_numeric(row.get("Price", 0), errors='coerce')
+            t = pd.to_numeric(row.get("Total", 0), errors='coerce')
+            
+            # If user entered Qty and Price, but Total is 0/NaN, calculate it
+            if q > 0 and p > 0:
+                 edited_food.at[i, "Total"] = q * p
         
         save_data("Food", edited_food)
-        st.success("Calculated and Saved!")
 
-    total_cost = edited_food["Total"].sum()
-    st.metric("Total Food Cost", f"${total_cost:.2f}")
+    total_food = pd.to_numeric(edited_food['Total'], errors='coerce').sum()
+    st.metric("Total Food Cost", f"${total_food:.2f}")
 
-# ==========================
-# 🎨 DECORATION (Persistent)
-# ==========================
-elif menu == "Decoration":
-    st.header("🎨 Decoration & Themes")
+# ---------------------------------------------------------
+# 🎲 GAMES
+# ---------------------------------------------------------
+elif menu == "Games":
+    st.header("🎲 Party Games")
+    st.caption("Customizable Game Plan")
     
-    df_decor = load_data("Decor")
+    cols = ["Game Name", "Rules", "Props Needed", "Winner"]
+    df = load_data("Games", cols)
+    
+    if df is None: st.error("Missing 'Games' tab."); st.stop()
+    
+    edited_games = st.data_editor(df, num_rows="dynamic", use_container_width=True)
+    
+    if st.button("Save Games"):
+        save_data("Games", edited_games)
+
+# ---------------------------------------------------------
+# 🎨 DECORATION
+# ---------------------------------------------------------
+elif menu == "Decoration":
+    st.header("🎨 Decoration & Props")
+    
+    cols = ["Item", "Theme", "Status", "Cost"]
+    df = load_data("Decor", cols)
+    
+    if df is None: st.error("Missing 'Decor' tab."); st.stop()
     
     edited_decor = st.data_editor(
-        df_decor,
+        df,
         num_rows="dynamic",
         column_config={
             "Cost": st.column_config.NumberColumn(format="$%.2f"),
@@ -193,35 +257,18 @@ elif menu == "Decoration":
         use_container_width=True
     )
     
-    if st.button("Save Decor Updates"):
+    if st.button("Save Decor"):
         save_data("Decor", edited_decor)
+        
+    total_decor = pd.to_numeric(edited_decor['Cost'], errors='coerce').sum()
+    st.metric("Total Decor Cost", f"${total_decor:.2f}")
 
-    st.metric("Total Decor Cost", f"${edited_decor['Cost'].sum():.2f}")
-
-# ==========================
-# 🎲 GAMES (Static for now)
-# ==========================
-elif menu == "Games":
-    st.header("🎲 Party Games")
-    c1, c2 = st.columns(2)
-    with c1:
-        st.subheader("1. Decibel Meter")
-        st.write("Who has the loudest laugh?")
-        st.subheader("2. Yoga Pose-Off")
-        st.write("Last person standing in Tree Pose.")
-    with c2:
-        st.subheader("3. Shark Net Volleyball")
-        st.write("Volleyball inside the swimming enclosure.")
-        st.subheader("4. Pass the Parcel")
-        st.write("Classic beach edition.")
-
-# ==========================
+# ---------------------------------------------------------
 # 📸 GALLERY & INVITATIONS
-# ==========================
+# ---------------------------------------------------------
 elif menu in ["Gallery", "Invitations"]:
     st.header(f"{menu}")
-    st.warning("⚠️ Note: File uploads in this version are temporary (Session only).")
-    st.info("For permanent photo storage, we would need to connect a Google Drive API or AWS S3 bucket, as Google Sheets cannot store images efficiently.")
+    st.warning("⚠️ Note: Images uploaded here are temporary (Session Only) due to Google Sheets limitations.")
     
     uploaded = st.file_uploader("Upload Files", accept_multiple_files=True)
     if uploaded:
@@ -229,24 +276,29 @@ elif menu in ["Gallery", "Invitations"]:
         for i, f in enumerate(uploaded):
             cols[i%4].image(f, use_container_width=True)
 
-# ==========================
-# 🗣️ FEEDBACK (Persistent)
-# ==========================
+# ---------------------------------------------------------
+# 🗣️ FEEDBACK
+# ---------------------------------------------------------
 elif menu == "Feedback":
     st.header("🗣️ Guest Feedback")
     
+    # Load existing feedback to show admins
+    df_feed = load_data("Feedback", ["Name", "Rating", "Comments"])
+    
     with st.form("feedback_form"):
-        name = st.text_input("Name")
+        name = st.text_input("Name (Optional)")
         rating = st.slider("Rating", 1, 5, 5)
         comments = st.text_area("Comments")
-        if st.form_submit_button("Submit"):
-            # Load current feedback, append new row, save back
-            try:
-                current_feedback = load_data("Feedback")
-                new_entry = pd.DataFrame([{"Name": name, "Rating": rating, "Comments": comments}])
-                updated_feedback = pd.concat([current_feedback, new_entry], ignore_index=True)
-                save_data("Feedback", updated_feedback)
-            except:
-                # If sheet is empty/new
-                new_entry = pd.DataFrame([{"Name": name, "Rating": rating, "Comments": comments}])
-                save_data("Feedback", new_entry)
+        
+        if st.form_submit_button("Submit Feedback"):
+            if df_feed is not None:
+                new_data = pd.DataFrame([{"Name": name if name else "Anonymous", "Rating": rating, "Comments": comments}])
+                updated_df = pd.concat([df_feed, new_data], ignore_index=True)
+                save_data("Feedback", updated_df)
+            else:
+                st.error("Feedback tab missing.")
+
+    if df_feed is not None and not df_feed.empty:
+        st.divider()
+        st.subheader("Recent Feedback")
+        st.dataframe(df_feed)
