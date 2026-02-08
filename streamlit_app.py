@@ -71,10 +71,19 @@ if st.session_state.access == "admin":
     ]
 else:
     menu = [
-        "📍 Event Info", 
-        "🍕 Menu & Logistics", 
-        "🎲 Games & Fun", 
-        "📸 Gallery"
+         "📍 Dashboard & Map",
+        "👥 Guests & Pizza Calc", 
+        "💰 Budget & Tasks", 
+        "🎭 Theme & Props", 
+        "🎲 Games & Activities",
+        "📝 Planner Chat",
+        "📸 Gallery",
+        "📦 Export Archive"
+
+        # "📍 Event Info", 
+        # "🍕 Menu & Logistics", 
+        # "🎲 Games & Fun", 
+        # "📸 Gallery"
     ]
 
 choice = st.sidebar.radio("Navigate", menu)
